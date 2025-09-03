@@ -9,7 +9,6 @@ from services.binance_client import create_binance_client
 from services.account import get_account_balance
 from services.marketdata import get_historical_klines
 from strategies.conservadora import simular_conservadora
-from strategies.arriscada import simular_arriscada
 
 # ===== PARÂMETROS FIXOS (fácil de alterar) =====
 SYMBOL = "BTCUSDT"
@@ -61,21 +60,13 @@ def main():
             SYMBOL, ALOCACAO_POR_ENTRADA, TIMEFRAME, df_candles
         )
         
-        # 6. Executar Estratégia Arriscada
-        print("\\n5. Executando Estratégia Arriscada...")
-        resultado_arriscada = simular_arriscada(
-            SYMBOL, ALOCACAO_POR_ENTRADA, TIMEFRAME, df_candles
-        )
-        
-        # 7. Gerar logs CSV
-        print("\\n6. Gerando logs CSV...")
+        # 6. Gerar logs CSV
+        print("\\n5. Gerando logs CSV...")
         _save_strategy_logs(resultado_conservadora, log_dir, SYMBOL, TIMEFRAME)
-        _save_strategy_logs(resultado_arriscada, log_dir, SYMBOL, TIMEFRAME)
         
-        # 8. Imprimir relatório no console
-        print("\\n7. Relatório de Resultados:")
+        # 7. Imprimir relatório no console
+        print("\\n6. Relatório de Resultados:")
         _print_strategy_report(resultado_conservadora, SYMBOL, TIMEFRAME)
-        _print_strategy_report(resultado_arriscada, SYMBOL, TIMEFRAME)
         
         print(f"\\n✓ Execução concluída! Logs salvos em: {log_dir}")
         
