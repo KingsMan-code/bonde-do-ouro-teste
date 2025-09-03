@@ -101,38 +101,47 @@ def _save_strategy_logs(resultado_estrategia: dict, log_dir: str, symbol: str, i
 
 def _print_strategy_report(resultado_estrategia: dict, symbol: str, interval: str):
     """
-    Imprime o relatório formatado de uma estratégia
+    Imprime o relatório formatado de uma estratégia, incluindo valor inicial, valor final e lucro
     """
     estrategia_nome = resultado_estrategia['estrategia'].upper()
     results = resultado_estrategia['results_by_combo']
     winner = resultado_estrategia['winner']
-    
-    print(f"\\n=== Estratégia: {estrategia_nome} ({symbol} / {interval}) ===")
-    print(f"{'combo':<8} {'retorno%':<10} {'trades':<8} {'win_rate%':<10}")
-    print("-" * 40)
-    
+
+    # Valor inicial padrão para simulação
+    valor_inicial = 100.0
+
+    print(f"\n=== Estratégia: {estrategia_nome} ({symbol} / {interval}) ===")
+    print(f"{'combo':<8} {'retorno%':<10} {'trades':<8} {'win_rate%':<10} {'valor_inicial':<15} {'valor_final':<12} {'lucro':<10}")
+    print("-" * 82)
+
     # Ordena por retorno (desc), depois win_rate (desc), depois trades (desc)
     sorted_results = sorted(
         results, 
         key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']), 
         reverse=True
     )
-    
+
     for result in sorted_results:
         combo = result['combo']
         retorno = result['retorno_pct']
         trades = result['trades']
         win_rate = result['win_rate_pct']
-        
+
+        # Calcula valor final e lucro
+        valor_final = valor_inicial * (1 + retorno / 100.0)
+        lucro = valor_final - valor_inicial
+
         # Formata o retorno com sinal
         retorno_str = f"{retorno:+.2f}%"
         win_rate_str = f"{win_rate:.2f}" if trades > 0 else "0.00"
-        
-        print(f"{combo:<8} {retorno_str:<10} {trades:<8} {win_rate_str:<10}")
-    
+
+        print(f"{combo:<8} {retorno_str:<10} {trades:<8} {win_rate_str:<10} {valor_inicial:<15.2f} {valor_final:<12.2f} {lucro:<10.2f}")
+
     # Destaca a vencedora
     winner_retorno = f"{winner['retorno_pct']:+.2f}%"
-    print(f"\\nVencedora ({estrategia_nome.title()}): {winner['combo']}  |  {winner_retorno}")
+    winner_valor_final = valor_inicial * (1 + winner['retorno_pct'] / 100.0)
+    winner_lucro = winner_valor_final - valor_inicial
+    print(f"\nVencedora ({estrategia_nome.title()}): {winner['combo']}  |  {winner_retorno}  |  Valor final: {winner_valor_final:.2f}  |  Lucro: {winner_lucro:.2f}")
 
 if __name__ == "__main__":
     main()
