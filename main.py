@@ -81,6 +81,11 @@ ESTRATEGIAS = {
         'nome': 'SMA 200 + Volume + ATR + Médias Móveis (Combo)',
         'modulo': 'strategies.estrategia_12',
         'funcao': 'simular_estrategia_12'
+    },
+    13: {
+        'nome': 'Bollinger Bands + Médias Móveis (Combo)',
+        'modulo': 'strategies.estrategia_13',
+        'funcao': 'simular_estrategia_13'
     }
 }
 
