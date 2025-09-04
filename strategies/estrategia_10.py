@@ -1,15 +1,16 @@
 """
-Estratégia Conservadora
-- Entrada: Golden Cross (MA curta cruza para cima da MA longa)
+Estratégia 10: Otimização de Parâmetros + Médias Móveis
+- Entrada: Golden Cross com range expandido de combinações
 - Saída: TP fixo +1% ou Death Cross (o que acontecer primeiro)
+- Testa um range muito maior de combinações para encontrar ótimos
 """
 import pandas as pd
 import numpy as np
 from services.marketdata import add_technical_indicators
 
-def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+def simular_estrategia_10(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
     """
-    Simula a estratégia conservadora
+    Simula a estratégia com otimização de parâmetros (range expandido)
     
     Args:
         symbol (str): Par de trading
@@ -20,15 +21,34 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     Returns:
         dict: Resultados da simulação
     """
-    # Combinações de MAs para testar
-    ma_combinations = [
-        (7, 21), (8, 21), (9, 27), (10, 30), 
-        (12, 26), (20, 50), (21, 55), (24, 72)
+    # Range expandido de combinações para otimização
+    ma_combinations = []
+    
+    # EMA curta: 5-15 períodos
+    # SMA longa: 20-100 períodos
+    for ma_short in range(5, 16):  # 5 a 15
+        for ma_long in [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]:
+            if ma_short < ma_long:  # Garante que a curta seja menor que a longa
+                ma_combinations.append((ma_short, ma_long))
+    
+    # Adiciona algumas combinações clássicas
+    classic_combinations = [
+        (7, 21), (8, 21), (9, 27), (10, 30), (12, 26), 
+        (20, 50), (21, 55), (24, 72)
     ]
+    
+    for combo in classic_combinations:
+        if combo not in ma_combinations:
+            ma_combinations.append(combo)
     
     results_by_combo = []
     
-    for ma_short, ma_long in ma_combinations:
+    print(f"Testando {len(ma_combinations)} combinações de parâmetros...")
+    
+    for i, (ma_short, ma_long) in enumerate(ma_combinations):
+        if i % 20 == 0:  # Progress update
+            print(f"Progresso: {i}/{len(ma_combinations)} combinações testadas")
+        
         result = _simulate_single_combo(
             df_candles, ma_short, ma_long, percentual_entrada, symbol, interval
         )
@@ -37,10 +57,18 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     # Encontra a combinação vencedora
     winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
     
+    # Mostra top 10 combinações
+    top_10 = sorted(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']), reverse=True)[:10]
+    
+    print("\\nTop 10 combinações encontradas:")
+    for i, combo in enumerate(top_10, 1):
+        print(f"{i:2d}. {combo['combo']}: {combo['retorno_pct']:+.2f}% ({combo['trades']} trades, {combo['win_rate_pct']:.1f}% win rate)")
+    
     return {
-        "estrategia": "conservadora",
+        "estrategia": "otimizacao_parametros",
         "results_by_combo": results_by_combo,
-        "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
+        "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']},
+        "top_10": top_10
     }
 
 def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int, 
@@ -65,12 +93,12 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     total_return = 0.0
     trades = []
     
-    # Adiciona colunas para logging
+    # Adiciona colunas para logging (apenas para a combinação vencedora)
     df_with_indicators['signal_buy_price'] = np.nan
     df_with_indicators['signal_sell_price'] = np.nan
     df_with_indicators['trade_pnl_pct'] = np.nan
     df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
-    df_with_indicators['estrategia'] = "conservadora"
+    df_with_indicators['estrategia'] = "otimizacao_parametros"
     df_with_indicators['reason'] = ""
     
     for i in range(1, len(df_with_indicators)):
@@ -139,14 +167,6 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     if num_trades > 0:
         winning_trades = sum(1 for trade in trades if trade['return_pct'] > 0)
         win_rate = (winning_trades / num_trades) * 100
-    
-    # Salva dados para log (será usado pelo main.py)
-    df_with_indicators._combo_data = {
-        'symbol': symbol,
-        'interval': interval,
-        'ma_short': ma_short,
-        'ma_long': ma_long
-    }
     
     return {
         "combo": f"{ma_short}x{ma_long}",

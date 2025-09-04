@@ -1,15 +1,33 @@
 """
-Estratégia Conservadora
-- Entrada: Golden Cross (MA curta cruza para cima da MA longa)
+Estratégia 7: RSI como Filtro + Médias Móveis
+- Entrada: Golden Cross + RSI entre 30-70 (evita sobrecompra/sobrevenda)
 - Saída: TP fixo +1% ou Death Cross (o que acontecer primeiro)
 """
 import pandas as pd
 import numpy as np
 from services.marketdata import add_technical_indicators
 
-def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
-    Simula a estratégia conservadora
+    Calcula o Relative Strength Index (RSI)
+    """
+    close = df['close']
+    delta = close.diff()
+    
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi
+
+def simular_estrategia_7(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+    """
+    Simula a estratégia com RSI como filtro
     
     Args:
         symbol (str): Par de trading
@@ -22,7 +40,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     """
     # Combinações de MAs para testar
     ma_combinations = [
-        (7, 21), (8, 21), (9, 27), (10, 30), 
+        (7, 21), (7, 25), (8, 21), (9, 27), (10, 30), 
         (12, 26), (20, 50), (21, 55), (24, 72)
     ]
     
@@ -38,7 +56,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
     
     return {
-        "estrategia": "conservadora",
+        "estrategia": "rsi_filtro",
         "results_by_combo": results_by_combo,
         "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
     }
@@ -46,7 +64,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
 def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int, 
                           percentual_entrada: float, symbol: str, interval: str) -> dict:
     """
-    Simula uma única combinação de MAs
+    Simula uma única combinação de MAs com filtro RSI
     """
     if df.empty:
         return {
@@ -59,6 +77,9 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     # Adiciona indicadores técnicos
     df_with_indicators = add_technical_indicators(df.copy(), ma_short, ma_long)
     
+    # Adiciona RSI para filtro
+    df_with_indicators['rsi_14'] = calculate_rsi(df_with_indicators, 14)
+    
     # Inicializa variáveis de controle
     position_open = False
     entry_price = 0.0
@@ -70,7 +91,7 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     df_with_indicators['signal_sell_price'] = np.nan
     df_with_indicators['trade_pnl_pct'] = np.nan
     df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
-    df_with_indicators['estrategia'] = "conservadora"
+    df_with_indicators['estrategia'] = "rsi_filtro"
     df_with_indicators['reason'] = ""
     
     for i in range(1, len(df_with_indicators)):
@@ -79,22 +100,27 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
         
         current_price = current_row['close']
         
-        # Verifica se há dados suficientes para as MAs
-        if pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']):
+        # Verifica se há dados suficientes para as MAs e RSI
+        if (pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']) or 
+            pd.isna(current_row['rsi_14'])):
             continue
         
-        # Sinal de entrada: Golden Cross
+        # Sinal de entrada: Golden Cross + Filtro RSI
         if not position_open:
             # Golden Cross: MA curta cruza para cima da MA longa
-            if (prev_row['ma_short'] <= prev_row['ma_long'] and 
-                current_row['ma_short'] > current_row['ma_long']):
-                
+            golden_cross = (prev_row['ma_short'] <= prev_row['ma_long'] and 
+                           current_row['ma_short'] > current_row['ma_long'])
+            
+            # Filtro RSI: evita sobrecompra/sobrevenda (RSI entre 30-70)
+            rsi_filter = 30 <= current_row['rsi_14'] <= 70
+            
+            if golden_cross and rsi_filter:
                 position_open = True
                 entry_price = current_price
                 
                 # Marca no DataFrame
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_buy_price')] = entry_price
-                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross"
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross_rsi_filter"
         
         # Sinal de saída
         elif position_open:
@@ -112,6 +138,11 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
                 sell_signal = True
                 sell_reason = "death_cross"
             
+            # Saída adicional: RSI em sobrecompra extrema (>80)
+            elif current_row['rsi_14'] > 80:
+                sell_signal = True
+                sell_reason = "rsi_overbought"
+            
             if sell_signal:
                 # Calcula o retorno da operação
                 trade_return = (current_price - entry_price) / entry_price
@@ -121,7 +152,9 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
                     'entry_price': entry_price,
                     'exit_price': current_price,
                     'return_pct': trade_return * 100,
-                    'reason': sell_reason
+                    'reason': sell_reason,
+                    'entry_rsi': df_with_indicators.iloc[df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price].index[0]]['rsi_14'] if len(df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price]) > 0 else np.nan,
+                    'exit_rsi': current_row['rsi_14']
                 })
                 
                 # Marca no DataFrame
@@ -139,14 +172,6 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     if num_trades > 0:
         winning_trades = sum(1 for trade in trades if trade['return_pct'] > 0)
         win_rate = (winning_trades / num_trades) * 100
-    
-    # Salva dados para log (será usado pelo main.py)
-    df_with_indicators._combo_data = {
-        'symbol': symbol,
-        'interval': interval,
-        'ma_short': ma_short,
-        'ma_long': ma_long
-    }
     
     return {
         "combo": f"{ma_short}x{ma_long}",

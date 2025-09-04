@@ -8,117 +8,13 @@ from datetime import datetime
 from services.binance_client import create_binance_client
 from services.account import get_account_balance
 from services.marketdata import get_historical_klines
+from strategies.conservadora import simular_conservadora
 
 # ===== PARÂMETROS FIXOS (fácil de alterar) =====
 SYMBOL = "BTCUSDT"
 ALOCACAO_POR_ENTRADA = 1.0  # 100% da banca
 TIMEFRAME = "1h"
 LIMIT_CANDLES = 1000
-
-# ===== ESTRATÉGIAS DISPONÍVEIS =====
-ESTRATEGIAS = {
-    0: {
-        'nome': 'Conservadora Original',
-        'modulo': 'strategies.estrategia_0',
-        'funcao': 'simular_estrategia_0'
-    },
-    1: {
-        'nome': 'Filtros de Tendência + Médias Móveis',
-        'modulo': 'strategies.estrategia_1',
-        'funcao': 'simular_estrategia_1'
-    },
-    2: {
-        'nome': 'Confirmação de Volume + Médias Móveis',
-        'modulo': 'strategies.estrategia_2',
-        'funcao': 'simular_estrategia_2'
-    },
-    3: {
-        'nome': 'Filtro de Volatilidade (ATR) + Médias Móveis',
-        'modulo': 'strategies.estrategia_3',
-        'funcao': 'simular_estrategia_3'
-    },
-    4: {
-        'nome': 'Stop Loss Dinâmico + Médias Móveis',
-        'modulo': 'strategies.estrategia_4',
-        'funcao': 'simular_estrategia_4'
-    },
-    5: {
-        'nome': 'Take Profit Escalonado + Médias Móveis',
-        'modulo': 'strategies.estrategia_5',
-        'funcao': 'simular_estrategia_5'
-    },
-    6: {
-        'nome': 'Gestão de Posição Adaptativa + Médias Móveis',
-        'modulo': 'strategies.estrategia_6',
-        'funcao': 'simular_estrategia_6'
-    },
-    7: {
-        'nome': 'RSI como Filtro + Médias Móveis',
-        'modulo': 'strategies.estrategia_7',
-        'funcao': 'simular_estrategia_7'
-    },
-    8: {
-        'nome': 'MACD Confirmação + Médias Móveis',
-        'modulo': 'strategies.estrategia_8',
-        'funcao': 'simular_estrategia_8'
-    },
-    9: {
-        'nome': 'Bollinger Bands + Médias Móveis',
-        'modulo': 'strategies.estrategia_9',
-        'funcao': 'simular_estrategia_9'
-    },
-    10: {
-        'nome': 'Otimização de Parâmetros + Médias Móveis',
-        'modulo': 'strategies.estrategia_10',
-        'funcao': 'simular_estrategia_10'
-    },
-    11: {
-        'nome': 'Multi-Timeframe + Médias Móveis',
-        'modulo': 'strategies.estrategia_11',
-        'funcao': 'simular_estrategia_11'
-    },
-    12: {
-        'nome': 'SMA 200 + Volume + ATR + Médias Móveis (Combo)',
-        'modulo': 'strategies.estrategia_12',
-        'funcao': 'simular_estrategia_12'
-    }
-}
-
-def escolher_estrategia():
-    """
-    Permite ao usuário escolher qual estratégia executar
-    """
-    print("\\n" + "=" * 80)
-    print("ESCOLHA A ESTRATÉGIA PARA BACKTESTING")
-    print("=" * 80)
-    
-    for num, info in ESTRATEGIAS.items():
-        print(f"{num:2d} - {info['nome']}")
-    
-    print("=" * 80)
-    
-    while True:
-        try:
-            escolha = int(input("\\nDigite o número da estratégia (0-12): "))
-            if escolha in ESTRATEGIAS:
-                return escolha
-            else:
-                print("❌ Número inválido! Escolha entre 0 e 12.")
-        except ValueError:
-            print("❌ Por favor, digite apenas números!")
-
-def importar_estrategia(numero_estrategia):
-    """
-    Importa dinamicamente a estratégia escolhida
-    """
-    try:
-        estrategia_info = ESTRATEGIAS[numero_estrategia]
-        modulo = __import__(estrategia_info['modulo'], fromlist=[estrategia_info['funcao']])
-        funcao_estrategia = getattr(modulo, estrategia_info['funcao'])
-        return funcao_estrategia, estrategia_info['nome']
-    except ImportError as e:
-        print(f"❌ Erro ao importar estratégia {numero_estrategia}: {e}")
-        return None, None
 
 def main():
     """
@@ -129,16 +25,6 @@ def main():
     print("=" * 60)
     
     try:
-        # 0. Escolher estratégia
-        numero_estrategia = escolher_estrategia()
-        funcao_estrategia, nome_estrategia = importar_estrategia(numero_estrategia)
-        
-        if funcao_estrategia is None:
-            print("❌ Não foi possível carregar a estratégia. Encerrando...")
-            return
-        
-        print(f"\\n✓ Estratégia selecionada: {nome_estrategia}")
-        
         # 1. Carregar .env e instanciar o Client
         print("\\n1. Conectando com a Binance...")
         client = create_binance_client()
@@ -164,23 +50,23 @@ def main():
         
         # 4. Criar pasta de logs com timestamp
         timestamp = datetime.now().strftime("%m-%d-%Y-%H-%M")
-        log_dir = f"logs/estrategia_{numero_estrategia}_{timestamp}"
+        log_dir = f"logs/{timestamp}"
         os.makedirs(log_dir, exist_ok=True)
         print(f"✓ Pasta de logs criada: {log_dir}")
         
-        # 5. Executar Estratégia Escolhida
-        print(f"\\n4. Executando {nome_estrategia}...")
-        resultado_estrategia = funcao_estrategia(
+        # 5. Executar Estratégia Conservadora
+        print("\\n4. Executando Estratégia Conservadora...")
+        resultado_conservadora = simular_conservadora(
             SYMBOL, ALOCACAO_POR_ENTRADA, TIMEFRAME, df_candles
         )
         
         # 6. Gerar logs CSV
         print("\\n5. Gerando logs CSV...")
-        _save_strategy_logs(resultado_estrategia, log_dir, SYMBOL, TIMEFRAME)
+        _save_strategy_logs(resultado_conservadora, log_dir, SYMBOL, TIMEFRAME)
         
         # 7. Imprimir relatório no console
         print("\\n6. Relatório de Resultados:")
-        _print_strategy_report(resultado_estrategia, SYMBOL, TIMEFRAME)
+        _print_strategy_report(resultado_conservadora, SYMBOL, TIMEFRAME)
         
         print(f"\\n✓ Execução concluída! Logs salvos em: {log_dir}")
         
@@ -224,7 +110,7 @@ def _print_strategy_report(resultado_estrategia: dict, symbol: str, interval: st
     # Valor inicial padrão para simulação
     valor_inicial = 100.0
 
-    print(f"\\n=== Estratégia: {estrategia_nome} ({symbol} / {interval}) ===")
+    print(f"\n=== Estratégia: {estrategia_nome} ({symbol} / {interval}) ===")
     print(f"{'combo':<8} {'retorno%':<10} {'trades':<8} {'win_rate%':<10} {'valor_inicial':<15} {'valor_final':<12} {'lucro':<10}")
     print("-" * 82)
 
@@ -255,7 +141,7 @@ def _print_strategy_report(resultado_estrategia: dict, symbol: str, interval: st
     winner_retorno = f"{winner['retorno_pct']:+.2f}%"
     winner_valor_final = valor_inicial * (1 + winner['retorno_pct'] / 100.0)
     winner_lucro = winner_valor_final - valor_inicial
-    print(f"\\nVencedora ({estrategia_nome.title()}): {winner['combo']}  |  {winner_retorno}  |  Valor final: {winner_valor_final:.2f}  |  Lucro: {winner_lucro:.2f}")
+    print(f"\nVencedora ({estrategia_nome.title()}): {winner['combo']}  |  {winner_retorno}  |  Valor final: {winner_valor_final:.2f}  |  Lucro: {winner_lucro:.2f}")
 
 if __name__ == "__main__":
     main()

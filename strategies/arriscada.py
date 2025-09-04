@@ -1,15 +1,15 @@
 """
-Estratégia Conservadora
+Estratégia Arriscada
 - Entrada: Golden Cross (MA curta cruza para cima da MA longa)
-- Saída: TP fixo +1% ou Death Cross (o que acontecer primeiro)
+- Saída: Death Cross ou Stop Loss -1% (o que acontecer primeiro)
 """
 import pandas as pd
 import numpy as np
 from services.marketdata import add_technical_indicators
 
-def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+def simular_arriscada(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
     """
-    Simula a estratégia conservadora
+    Simula a estratégia arriscada
     
     Args:
         symbol (str): Par de trading
@@ -38,7 +38,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
     
     return {
-        "estrategia": "conservadora",
+        "estrategia": "arriscada",
         "results_by_combo": results_by_combo,
         "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
     }
@@ -70,7 +70,7 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     df_with_indicators['signal_sell_price'] = np.nan
     df_with_indicators['trade_pnl_pct'] = np.nan
     df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
-    df_with_indicators['estrategia'] = "conservadora"
+    df_with_indicators['estrategia'] = "arriscada"
     df_with_indicators['reason'] = ""
     
     for i in range(1, len(df_with_indicators)):
@@ -101,10 +101,10 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
             sell_signal = False
             sell_reason = ""
             
-            # TP: +1%
-            if current_price >= entry_price * 1.01:
+            # Stop Loss: -1%
+            if current_price <= entry_price * 0.99:
                 sell_signal = True
-                sell_reason = "tp_1pct"
+                sell_reason = "stop_loss_1pct"
             
             # Death Cross: MA curta cruza para baixo da MA longa
             elif (prev_row['ma_short'] >= prev_row['ma_long'] and 

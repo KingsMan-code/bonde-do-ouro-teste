@@ -1,0 +1,214 @@
+"""
+Estratégia 12: SMA 200 + Volume + ATR + Médias Móveis (Combo Completo)
+- Entrada: Golden Cross + Preço > SMA 200 + Volume confirmado + ATR adequado
+- Saída: TP fixo +1%, Death Cross ou Stop Loss baseado em ATR
+- Combina os 3 melhores filtros em uma estratégia robusta
+"""
+import pandas as pd
+import numpy as np
+from services.marketdata import add_technical_indicators
+
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Calcula o Average True Range (ATR)
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close'].shift(1)
+    
+    tr1 = high - low
+    tr2 = abs(high - close)
+    tr3 = abs(low - close)
+    
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.rolling(window=period, min_periods=period).mean()
+    
+    return atr
+
+def simular_estrategia_12(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+    """
+    Simula a estratégia combo completa (SMA 200 + Volume + ATR)
+    
+    Args:
+        symbol (str): Par de trading
+        percentual_entrada (float): Percentual da banca para cada entrada (ex: 1.0 = 100%)
+        interval (str): Timeframe
+        df_candles (pd.DataFrame): DataFrame com dados OHLCV
+    
+    Returns:
+        dict: Resultados da simulação
+    """
+    # Combinações de MAs para testar
+    ma_combinations = [
+        (7, 21), (7, 25), (8, 21), (9, 27), (10, 30), 
+        (12, 26), (20, 50), (21, 55), (24, 72)
+    ]
+    
+    results_by_combo = []
+    
+    for ma_short, ma_long in ma_combinations:
+        result = _simulate_single_combo(
+            df_candles, ma_short, ma_long, percentual_entrada, symbol, interval
+        )
+        results_by_combo.append(result)
+    
+    # Encontra a combinação vencedora
+    winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
+    
+    return {
+        "estrategia": "combo_completo_sma200_volume_atr",
+        "results_by_combo": results_by_combo,
+        "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
+    }
+
+def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int, 
+                          percentual_entrada: float, symbol: str, interval: str) -> dict:
+    """
+    Simula uma única combinação de MAs com todos os filtros combinados
+    """
+    if df.empty:
+        return {
+            "combo": f"{ma_short}x{ma_long}",
+            "retorno_pct": 0.0,
+            "trades": 0,
+            "win_rate_pct": 0.0
+        }
+    
+    # Adiciona indicadores técnicos
+    df_with_indicators = add_technical_indicators(df.copy(), ma_short, ma_long)
+    
+    # Adiciona SMA 200 para filtro de tendência
+    df_with_indicators['sma_200'] = df_with_indicators['close'].rolling(window=200, min_periods=200).mean()
+    
+    # Adiciona média de volume para confirmação
+    df_with_indicators['volume_ma_20'] = df_with_indicators['volume'].rolling(window=20, min_periods=20).mean()
+    
+    # Adiciona ATR para stop loss dinâmico e filtro de volatilidade
+    df_with_indicators['atr_14'] = calculate_atr(df_with_indicators, 14)
+    df_with_indicators['atr_ma_20'] = df_with_indicators['atr_14'].rolling(window=20, min_periods=20).mean()
+    
+    # Inicializa variáveis de controle
+    position_open = False
+    entry_price = 0.0
+    stop_loss_price = 0.0
+    total_return = 0.0
+    trades = []
+    
+    # Adiciona colunas para logging
+    df_with_indicators['signal_buy_price'] = np.nan
+    df_with_indicators['signal_sell_price'] = np.nan
+    df_with_indicators['trade_pnl_pct'] = np.nan
+    df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
+    df_with_indicators['estrategia'] = "combo_completo_sma200_volume_atr"
+    df_with_indicators['reason'] = ""
+    
+    for i in range(1, len(df_with_indicators)):
+        current_row = df_with_indicators.iloc[i]
+        prev_row = df_with_indicators.iloc[i-1]
+        
+        current_price = current_row['close']
+        
+        # Verifica se há dados suficientes para todos os indicadores
+        if (pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']) or 
+            pd.isna(current_row['sma_200']) or pd.isna(current_row['volume_ma_20']) or
+            pd.isna(current_row['atr_14']) or pd.isna(current_row['atr_ma_20'])):
+            continue
+        
+        # Sinal de entrada: Golden Cross + TODOS os filtros
+        if not position_open:
+            # 1. Golden Cross: MA curta cruza para cima da MA longa
+            golden_cross = (prev_row['ma_short'] <= prev_row['ma_long'] and 
+                           current_row['ma_short'] > current_row['ma_long'])
+            
+            # 2. Filtro de tendência: preço acima da SMA 200
+            trend_filter = current_price > current_row['sma_200']
+            
+            # 3. Confirmação de volume: volume 50% acima da média
+            volume_confirmation = current_row['volume'] > (current_row['volume_ma_20'] * 1.5)
+            
+            # 4. Filtro de volatilidade: ATR atual acima da média (volatilidade suficiente)
+            volatility_filter = current_row['atr_14'] > current_row['atr_ma_20']
+            
+            # 5. Filtro adicional: slope positivo da SMA 200 (tendência crescente)
+            sma200_slope_positive = current_row['sma_200'] > prev_row['sma_200']
+            
+            # TODOS os filtros devem ser verdadeiros
+            if (golden_cross and trend_filter and volume_confirmation and 
+                volatility_filter and sma200_slope_positive):
+                
+                position_open = True
+                entry_price = current_price
+                
+                # Stop loss dinâmico: 2x ATR abaixo do preço de entrada
+                stop_loss_price = entry_price - (2 * current_row['atr_14'])
+                
+                # Marca no DataFrame
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_buy_price')] = entry_price
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross_all_filters"
+        
+        # Sinal de saída
+        elif position_open:
+            sell_signal = False
+            sell_reason = ""
+            
+            # TP: +1%
+            if current_price >= entry_price * 1.01:
+                sell_signal = True
+                sell_reason = "tp_1pct"
+            
+            # Stop Loss Dinâmico: preço abaixo do stop calculado
+            elif current_price <= stop_loss_price:
+                sell_signal = True
+                sell_reason = "stop_loss_atr"
+            
+            # Death Cross: MA curta cruza para baixo da MA longa
+            elif (prev_row['ma_short'] >= prev_row['ma_long'] and 
+                  current_row['ma_short'] < current_row['ma_long']):
+                sell_signal = True
+                sell_reason = "death_cross"
+            
+            # Saída adicional: preço abaixo da SMA 200 (perda de tendência)
+            elif current_price < current_row['sma_200']:
+                sell_signal = True
+                sell_reason = "trend_break_sma200"
+            
+            if sell_signal:
+                # Calcula o retorno da operação
+                trade_return = (current_price - entry_price) / entry_price
+                total_return += trade_return * percentual_entrada
+                
+                trades.append({
+                    'entry_price': entry_price,
+                    'exit_price': current_price,
+                    'return_pct': trade_return * 100,
+                    'reason': sell_reason,
+                    'stop_loss_price': stop_loss_price,
+                    'entry_volume_ratio': df_with_indicators.iloc[df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price].index[0]]['volume'] / df_with_indicators.iloc[df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price].index[0]]['volume_ma_20'] if len(df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price]) > 0 else np.nan,
+                    'entry_atr_ratio': df_with_indicators.iloc[df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price].index[0]]['atr_14'] / df_with_indicators.iloc[df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price].index[0]]['atr_ma_20'] if len(df_with_indicators[df_with_indicators['signal_buy_price'] == entry_price]) > 0 else np.nan
+                })
+                
+                # Marca no DataFrame
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_sell_price')] = current_price
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('trade_pnl_pct')] = trade_return * 100
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = sell_reason
+                
+                position_open = False
+                entry_price = 0.0
+                stop_loss_price = 0.0
+    
+    # Calcula estatísticas
+    num_trades = len(trades)
+    win_rate = 0.0
+    
+    if num_trades > 0:
+        winning_trades = sum(1 for trade in trades if trade['return_pct'] > 0)
+        win_rate = (winning_trades / num_trades) * 100
+    
+    return {
+        "combo": f"{ma_short}x{ma_long}",
+        "retorno_pct": total_return * 100,
+        "trades": num_trades,
+        "win_rate_pct": win_rate,
+        "_df_log": df_with_indicators  # Para salvar no CSV
+    }
+

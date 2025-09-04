@@ -22,8 +22,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     """
     # Combinações de MAs para testar
     ma_combinations = [
-        (7, 21), (8, 21), (9, 27), (10, 30), 
-        (12, 26), (20, 50), (21, 55), (24, 72)
+        (7, 21), (7, 25), (8, 21), (9, 27), (10, 30)
     ]
     
     results_by_combo = []

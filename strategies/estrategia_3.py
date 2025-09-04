@@ -1,15 +1,32 @@
 """
-Estratégia Conservadora
-- Entrada: Golden Cross (MA curta cruza para cima da MA longa)
+Estratégia 3: Filtro de Volatilidade (ATR) + Médias Móveis
+- Entrada: Golden Cross + ATR acima do threshold (filtro de volatilidade)
 - Saída: TP fixo +1% ou Death Cross (o que acontecer primeiro)
 """
 import pandas as pd
 import numpy as np
 from services.marketdata import add_technical_indicators
 
-def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
-    Simula a estratégia conservadora
+    Calcula o Average True Range (ATR)
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close'].shift(1)
+    
+    tr1 = high - low
+    tr2 = abs(high - close)
+    tr3 = abs(low - close)
+    
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.rolling(window=period, min_periods=period).mean()
+    
+    return atr
+
+def simular_estrategia_3(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+    """
+    Simula a estratégia com filtro de volatilidade (ATR)
     
     Args:
         symbol (str): Par de trading
@@ -22,7 +39,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     """
     # Combinações de MAs para testar
     ma_combinations = [
-        (7, 21), (8, 21), (9, 27), (10, 30), 
+        (7, 21), (7, 25), (8, 21), (9, 27), (10, 30), 
         (12, 26), (20, 50), (21, 55), (24, 72)
     ]
     
@@ -38,7 +55,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
     
     return {
-        "estrategia": "conservadora",
+        "estrategia": "filtro_volatilidade_atr",
         "results_by_combo": results_by_combo,
         "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
     }
@@ -46,7 +63,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
 def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int, 
                           percentual_entrada: float, symbol: str, interval: str) -> dict:
     """
-    Simula uma única combinação de MAs
+    Simula uma única combinação de MAs com filtro de volatilidade ATR
     """
     if df.empty:
         return {
@@ -59,6 +76,10 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     # Adiciona indicadores técnicos
     df_with_indicators = add_technical_indicators(df.copy(), ma_short, ma_long)
     
+    # Adiciona ATR para filtro de volatilidade
+    df_with_indicators['atr_14'] = calculate_atr(df_with_indicators, 14)
+    df_with_indicators['atr_ma_20'] = df_with_indicators['atr_14'].rolling(window=20, min_periods=20).mean()
+    
     # Inicializa variáveis de controle
     position_open = False
     entry_price = 0.0
@@ -70,7 +91,7 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     df_with_indicators['signal_sell_price'] = np.nan
     df_with_indicators['trade_pnl_pct'] = np.nan
     df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
-    df_with_indicators['estrategia'] = "conservadora"
+    df_with_indicators['estrategia'] = "filtro_volatilidade_atr"
     df_with_indicators['reason'] = ""
     
     for i in range(1, len(df_with_indicators)):
@@ -79,22 +100,27 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
         
         current_price = current_row['close']
         
-        # Verifica se há dados suficientes para as MAs
-        if pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']):
+        # Verifica se há dados suficientes para as MAs e ATR
+        if (pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']) or 
+            pd.isna(current_row['atr_14']) or pd.isna(current_row['atr_ma_20'])):
             continue
         
-        # Sinal de entrada: Golden Cross
+        # Sinal de entrada: Golden Cross + Filtro de Volatilidade
         if not position_open:
             # Golden Cross: MA curta cruza para cima da MA longa
-            if (prev_row['ma_short'] <= prev_row['ma_long'] and 
-                current_row['ma_short'] > current_row['ma_long']):
-                
+            golden_cross = (prev_row['ma_short'] <= prev_row['ma_long'] and 
+                           current_row['ma_short'] > current_row['ma_long'])
+            
+            # Filtro de volatilidade: ATR atual acima da média (volatilidade suficiente)
+            volatility_filter = current_row['atr_14'] > current_row['atr_ma_20']
+            
+            if golden_cross and volatility_filter:
                 position_open = True
                 entry_price = current_price
                 
                 # Marca no DataFrame
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_buy_price')] = entry_price
-                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross"
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross_atr_filter"
         
         # Sinal de saída
         elif position_open:
@@ -139,14 +165,6 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     if num_trades > 0:
         winning_trades = sum(1 for trade in trades if trade['return_pct'] > 0)
         win_rate = (winning_trades / num_trades) * 100
-    
-    # Salva dados para log (será usado pelo main.py)
-    df_with_indicators._combo_data = {
-        'symbol': symbol,
-        'interval': interval,
-        'ma_short': ma_short,
-        'ma_long': ma_long
-    }
     
     return {
         "combo": f"{ma_short}x{ma_long}",

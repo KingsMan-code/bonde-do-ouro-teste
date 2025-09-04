@@ -1,15 +1,33 @@
 """
-Estratégia Conservadora
-- Entrada: Golden Cross (MA curta cruza para cima da MA longa)
+Estratégia 6: Gestão de Posição Adaptativa + Médias Móveis
+- Entrada: Golden Cross com tamanho de posição baseado na volatilidade
 - Saída: TP fixo +1% ou Death Cross (o que acontecer primeiro)
+- Tamanho da posição varia inversamente com a volatilidade (ATR)
 """
 import pandas as pd
 import numpy as np
 from services.marketdata import add_technical_indicators
 
-def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
-    Simula a estratégia conservadora
+    Calcula o Average True Range (ATR)
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close'].shift(1)
+    
+    tr1 = high - low
+    tr2 = abs(high - close)
+    tr3 = abs(low - close)
+    
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.rolling(window=period, min_periods=period).mean()
+    
+    return atr
+
+def simular_estrategia_6(symbol: str, percentual_entrada: float, interval: str, df_candles: pd.DataFrame) -> dict:
+    """
+    Simula a estratégia com gestão de posição adaptativa
     
     Args:
         symbol (str): Par de trading
@@ -22,7 +40,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     """
     # Combinações de MAs para testar
     ma_combinations = [
-        (7, 21), (8, 21), (9, 27), (10, 30), 
+        (7, 21), (7, 25), (8, 21), (9, 27), (10, 30), 
         (12, 26), (20, 50), (21, 55), (24, 72)
     ]
     
@@ -38,7 +56,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
     winner = max(results_by_combo, key=lambda x: (x['retorno_pct'], x['win_rate_pct'], x['trades']))
     
     return {
-        "estrategia": "conservadora",
+        "estrategia": "gestao_posicao_adaptativa",
         "results_by_combo": results_by_combo,
         "winner": {"combo": winner['combo'], "retorno_pct": winner['retorno_pct']}
     }
@@ -46,7 +64,7 @@ def simular_conservadora(symbol: str, percentual_entrada: float, interval: str, 
 def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int, 
                           percentual_entrada: float, symbol: str, interval: str) -> dict:
     """
-    Simula uma única combinação de MAs
+    Simula uma única combinação de MAs com gestão de posição adaptativa
     """
     if df.empty:
         return {
@@ -59,9 +77,14 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     # Adiciona indicadores técnicos
     df_with_indicators = add_technical_indicators(df.copy(), ma_short, ma_long)
     
+    # Adiciona ATR para gestão de posição
+    df_with_indicators['atr_14'] = calculate_atr(df_with_indicators, 14)
+    df_with_indicators['atr_ma_50'] = df_with_indicators['atr_14'].rolling(window=50, min_periods=50).mean()
+    
     # Inicializa variáveis de controle
     position_open = False
     entry_price = 0.0
+    position_size = 0.0
     total_return = 0.0
     trades = []
     
@@ -70,8 +93,9 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
     df_with_indicators['signal_sell_price'] = np.nan
     df_with_indicators['trade_pnl_pct'] = np.nan
     df_with_indicators['combo'] = f"{ma_short}x{ma_long}"
-    df_with_indicators['estrategia'] = "conservadora"
+    df_with_indicators['estrategia'] = "gestao_posicao_adaptativa"
     df_with_indicators['reason'] = ""
+    df_with_indicators['position_size'] = np.nan
     
     for i in range(1, len(df_with_indicators)):
         current_row = df_with_indicators.iloc[i]
@@ -79,8 +103,9 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
         
         current_price = current_row['close']
         
-        # Verifica se há dados suficientes para as MAs
-        if pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']):
+        # Verifica se há dados suficientes para as MAs e ATR
+        if (pd.isna(current_row['ma_short']) or pd.isna(current_row['ma_long']) or 
+            pd.isna(current_row['atr_14']) or pd.isna(current_row['atr_ma_50'])):
             continue
         
         # Sinal de entrada: Golden Cross
@@ -89,12 +114,26 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
             if (prev_row['ma_short'] <= prev_row['ma_long'] and 
                 current_row['ma_short'] > current_row['ma_long']):
                 
+                # Calcula tamanho da posição baseado na volatilidade
+                # Menor volatilidade = maior posição, maior volatilidade = menor posição
+                atr_ratio = current_row['atr_14'] / current_row['atr_ma_50']
+                
+                if atr_ratio <= 0.8:  # Baixa volatilidade
+                    position_size = 1.0  # 100% da banca
+                elif atr_ratio <= 1.2:  # Volatilidade normal
+                    position_size = 0.75  # 75% da banca
+                elif atr_ratio <= 1.5:  # Alta volatilidade
+                    position_size = 0.5   # 50% da banca
+                else:  # Volatilidade muito alta
+                    position_size = 0.25  # 25% da banca
+                
                 position_open = True
                 entry_price = current_price
                 
                 # Marca no DataFrame
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_buy_price')] = entry_price
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = "golden_cross"
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('position_size')] = position_size
         
         # Sinal de saída
         elif position_open:
@@ -113,40 +152,37 @@ def _simulate_single_combo(df: pd.DataFrame, ma_short: int, ma_long: int,
                 sell_reason = "death_cross"
             
             if sell_signal:
-                # Calcula o retorno da operação
+                # Calcula o retorno da operação considerando o tamanho da posição
                 trade_return = (current_price - entry_price) / entry_price
-                total_return += trade_return * percentual_entrada
+                weighted_return = trade_return * position_size
+                total_return += weighted_return * percentual_entrada
                 
                 trades.append({
                     'entry_price': entry_price,
                     'exit_price': current_price,
                     'return_pct': trade_return * 100,
+                    'position_size': position_size,
+                    'weighted_return_pct': weighted_return * 100,
                     'reason': sell_reason
                 })
                 
                 # Marca no DataFrame
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('signal_sell_price')] = current_price
-                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('trade_pnl_pct')] = trade_return * 100
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('trade_pnl_pct')] = weighted_return * 100
                 df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('reason')] = sell_reason
+                df_with_indicators.iloc[i, df_with_indicators.columns.get_loc('position_size')] = position_size
                 
                 position_open = False
                 entry_price = 0.0
+                position_size = 0.0
     
     # Calcula estatísticas
     num_trades = len(trades)
     win_rate = 0.0
     
     if num_trades > 0:
-        winning_trades = sum(1 for trade in trades if trade['return_pct'] > 0)
+        winning_trades = sum(1 for trade in trades if trade['weighted_return_pct'] > 0)
         win_rate = (winning_trades / num_trades) * 100
-    
-    # Salva dados para log (será usado pelo main.py)
-    df_with_indicators._combo_data = {
-        'symbol': symbol,
-        'interval': interval,
-        'ma_short': ma_short,
-        'ma_long': ma_long
-    }
     
     return {
         "combo": f"{ma_short}x{ma_long}",
